@@ -9,8 +9,8 @@ import OpenAI from "openai";
 
 const execFileAsync = promisify(execFile);
 
-// 👇 Replace this with the exact path from: `which yt-dlp`
-const YTDLP_PATH = "/opt/homebrew/bin/yt-dlp"; // e.g. "/usr/local/bin/yt-dlp"
+// Use env var if provided (local Mac), otherwise just "yt-dlp" (inside Docker/Railway)
+const YTDLP_PATH = process.env.YTDLP_PATH || "yt-dlp";
 
 const app = express();
 app.use(cors());
@@ -67,7 +67,7 @@ app.post("/api/fetch-transcript", async (req, res) => {
     return sendError(res, "Could not create tmp directory on the server.", err);
   }
 
-  // ❗ IMPORTANT: let yt-dlp decide the extension (webm, m4a, etc.)
+  // Let yt-dlp decide the extension (webm, m4a, etc.)
   const outTemplate = path.join(outputDir, "audio-%(id)s.%(ext)s");
   let latestFile;
 
@@ -105,7 +105,6 @@ app.post("/api/fetch-transcript", async (req, res) => {
       return sendError(res, "Audio download failed: no audio files found.", null);
     }
 
-    // Take the last one (most recent)
     latestFile = path.join(outputDir, files[files.length - 1]);
     console.log("[INFO] Using audio file:", latestFile);
   } catch (err) {
@@ -130,7 +129,7 @@ app.post("/api/fetch-transcript", async (req, res) => {
     console.log("[INFO] Sending audio to OpenAI for transcription...");
     transcription = await openai.audio.transcriptions.create({
       file: fs.createReadStream(latestFile),
-      model: "gpt-4o-mini-transcribe", // or another transcription-capable model
+      model: "gpt-4o-mini-transcribe", // transcription-capable model
       response_format: "json",
       temperature: 0.2
     });
