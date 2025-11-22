@@ -9,7 +9,7 @@ import OpenAI from "openai";
 
 const execFileAsync = promisify(execFile);
 
-// Use env var if provided (local Mac), otherwise just "yt-dlp" (inside Docker/Railway)
+// In Docker/Railway we just call "yt-dlp". Locally you can override with YTDLP_PATH env.
 const YTDLP_PATH = process.env.YTDLP_PATH || "yt-dlp";
 
 const app = express();
@@ -26,6 +26,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
+// Centralised error helper
 function sendError(res, label, err) {
   console.error(`\n[ERROR] ${label}`);
   if (err) {
@@ -46,7 +47,6 @@ function sendError(res, label, err) {
     stderr: err && err.stderr ? String(err.stderr).slice(0, 1000) : null
   });
 }
-
 
 app.post("/api/fetch-transcript", async (req, res) => {
   const { videoUrl } = req.body || {};
@@ -70,20 +70,19 @@ app.post("/api/fetch-transcript", async (req, res) => {
     return sendError(res, "Could not create tmp directory on the server.", err);
   }
 
-  // Let yt-dlp decide the extension (webm, m4a, etc.)
   const outTemplate = path.join(outputDir, "audio-%(id)s.%(ext)s");
   let latestFile;
 
-  // 1) Download audio with yt-dlp (no ffmpeg / no re-encode)
+  // 1) Download audio with yt-dlp
   try {
     console.log("[INFO] Running yt-dlp to download bestaudio (no postprocessing)...");
     const { stdout, stderr } = await execFileAsync(
       YTDLP_PATH,
       [
         "-f",
-        "bestaudio",          // pick best audio format
+        "bestaudio",
         "-o",
-        outTemplate,          // audio-<id>.<ext>
+        outTemplate,
         videoUrl
       ],
       {
@@ -101,7 +100,7 @@ app.post("/api/fetch-transcript", async (req, res) => {
       .filter(
         (f) =>
           f.startsWith("audio-") &&
-          !f.endsWith(".part") // ignore partial files
+          !f.endsWith(".part")
       );
 
     if (!files.length) {
@@ -111,6 +110,18 @@ app.post("/api/fetch-transcript", async (req, res) => {
     latestFile = path.join(outputDir, files[files.length - 1]);
     console.log("[INFO] Using audio file:", latestFile);
   } catch (err) {
+    const stderr = err && err.stderr ? String(err.stderr) : "";
+    // Special-case YouTube 403 so frontend can show a friendly message
+    if (stderr.includes("HTTP Error 403")) {
+      console.error("[INFO] yt-dlp hit HTTP 403 Forbidden from YouTube.");
+      return res.status(400).json({
+        error: "YOUTUBE_FORBIDDEN",
+        message:
+          "YouTube denied this download (HTTP 403). This often happens from certain server locations. Try a different video or paste the transcript manually.",
+        stderr: stderr.slice(0, 1000)
+      });
+    }
+
     return sendError(
       res,
       "Audio download failed. Check yt-dlp is installed and the video is accessible.",
@@ -132,7 +143,7 @@ app.post("/api/fetch-transcript", async (req, res) => {
     console.log("[INFO] Sending audio to OpenAI for transcription...");
     transcription = await openai.audio.transcriptions.create({
       file: fs.createReadStream(latestFile),
-      model: "gpt-4o-mini-transcribe", // transcription-capable model
+      model: "gpt-4o-mini-transcribe",
       response_format: "json",
       temperature: 0.2
     });
