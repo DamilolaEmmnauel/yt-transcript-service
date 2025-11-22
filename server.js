@@ -41,9 +41,12 @@ function sendError(res, label, err) {
     }
   }
   return res.status(500).json({
-    error: label
+    error: label,
+    message: err && err.message ? String(err.message) : null,
+    stderr: err && err.stderr ? String(err.stderr).slice(0, 1000) : null
   });
 }
+
 
 app.post("/api/fetch-transcript", async (req, res) => {
   const { videoUrl } = req.body || {};
